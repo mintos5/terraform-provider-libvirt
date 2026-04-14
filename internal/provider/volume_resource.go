@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	golibvirt "github.com/digitalocean/go-libvirt"
 	"github.com/dmacvicar/terraform-provider-libvirt/v2/internal/generated"
@@ -348,6 +349,22 @@ func (r *VolumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
+	// Detect import: after ImportState, only ID is set — Name will be null.
+	// ID is a string of pool/path_to_volume
+	isImport := model.Name.IsNull() || model.Name.IsUnknown()
+	if isImport {
+		splitID := strings.SplitN(model.ID.ValueString(), "/", 2)
+		if len(splitID) == 1  || splitID[0] == "" {
+			resp.Diagnostics.AddWarning(
+				"Volume ID is missing pool name",
+				fmt.Sprintf("Storage volume not specified correctly for import "),
+			)
+			return
+		}
+		model.Pool = types.StringValue(splitID[0])
+		model.ID = types.StringValue("/" + splitID[1])
+		model.Key = types.StringValue("/" + splitID[1])
+	}
 	// Look up the volume by key
 	volume, err := r.client.Libvirt().StorageVolLookupByKey(model.Key.ValueString())
 	if err != nil {
