@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"libvirt.org/go/libvirtxml"
@@ -364,6 +365,26 @@ func (r *VolumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 		model.Pool = types.StringValue(splitID[0])
 		model.ID = types.StringValue("/" + splitID[1])
 		model.Key = types.StringValue("/" + splitID[1])
+		// Hack/Workaround for readVolume to populate informations to model.Target
+		var targetNilValues = map[string]attr.Value{
+			"cluster_size": types.Int64Null(),
+			"cluster_size_unit": types.StringNull(),
+			"compat": types.StringNull(),
+			"encryption": types.ObjectNull(generated.StorageEncryptionAttributeTypes()),
+			"features": types.ListNull(types.ObjectType{AttrTypes: generated.StorageVolumeTargetFeatureAttributeTypes()}),
+			//"format": types.ObjectNull(map[string]attr.Type{"type": types.StringType}),
+			"format": types.ObjectNull(generated.StorageVolumeTargetFormatAttributeTypes()),
+			"permissions": types.ObjectNull(generated.StorageVolumeTargetPermissionsAttributeTypes()),
+			"timestamps": types.ObjectNull(generated.StorageVolumeTargetTimestampsAttributeTypes()),
+			"path": types.StringNull(),
+		}
+		targetObj, objDiags := types.ObjectValue(generated.StorageVolumeTargetAttributeTypes(), targetNilValues)
+		resp.Diagnostics.Append(objDiags...)
+		if resp.Diagnostics.HasError() {
+			return
+		} else {
+			model.Target = targetObj
+		}
 	}
 	// Look up the volume by key
 	volume, err := r.client.Libvirt().StorageVolLookupByKey(model.Key.ValueString())
@@ -442,6 +463,19 @@ func (r *VolumeResource) readVolume(ctx context.Context, model *VolumeResourceMo
 			if !diags.HasError() {
 				// Update just the path field
 				targetModel.Path = types.StringValue(volumeDef.Target.Path)
+				// Add the format type for imports
+				if volumeDef.Target.Format != nil && volumeDef.Target.Format.Type != "" {
+					targetModelFormat, objDiags := types.ObjectValue(
+						generated.StorageVolumeTargetFormatAttributeTypes(),
+							map[string]attr.Value{
+						        "type": types.StringValue(volumeDef.Target.Format.Type),
+						},
+					)
+					diags.Append(objDiags...)
+					if !diags.HasError() {
+						targetModel.Format = targetModelFormat
+					}
+				}
 
 				// Write back
 				targetObj, objDiags := types.ObjectValueFrom(ctx, generated.StorageVolumeTargetAttributeTypes(), targetModel)
